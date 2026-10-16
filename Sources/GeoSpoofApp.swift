@@ -43,6 +43,7 @@ struct GeoSpoofApp: App {
             ContentView(model: model)
                 .frame(minWidth: 780, minHeight: 560)
                 .task {
+                    model.presentWelcomeIfNeeded()
                     await model.refresh()
                     while !Task.isCancelled {
                         do { try await Task.sleep(for: .seconds(30)) } catch { break }
@@ -53,6 +54,9 @@ struct GeoSpoofApp: App {
         .defaultSize(width: 1080, height: 740)
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandGroup(replacing: .help) {
+                Button("GeoSpoof Help") { model.showHelp() }
+            }
             CommandGroup(after: .newItem) {
                 Button("Refresh iPhone Connection") { Task { await model.refresh() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])

@@ -29,6 +29,9 @@ final class AppModel: ObservableObject {
     @Published var activeName: String?
     @Published var activePlaceID: UUID?
     @Published var activeCoordinate: CLLocationCoordinate2D?
+    @Published var showWelcome = false
+    @Published var welcomeFromHelp = false
+    static let welcomeVersion = "0.5"   // bump to show the welcome screen again after an update
     var region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 38.052, longitude: -78.501), span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1))
     let service: any DeviceControlling
     private let defaults: UserDefaults
@@ -38,6 +41,18 @@ final class AppModel: ObservableObject {
         selectedID = defaults.string(forKey: "selectedPhone") ?? ""
         pendingID = defaults.string(forKey: "pendingPhone")
     }
+    func presentWelcomeIfNeeded() {
+        if defaults.string(forKey: "welcomeSeen") != Self.welcomeVersion {
+            welcomeFromHelp = false
+            showWelcome = true
+        }
+    }
+    func showHelp() { welcomeFromHelp = true; showWelcome = true }
+    func dismissWelcome() {
+        defaults.set(Self.welcomeVersion, forKey: "welcomeSeen")
+        showWelcome = false
+    }
+
     private var search: MKLocalSearch?
     private var searchGeneration = UUID()
     private var supported = false

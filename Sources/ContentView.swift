@@ -1,6 +1,18 @@
 import SwiftUI
 import MapKit
 
+/// Native sidebar material that keeps its look when the window is not key.
+struct SidebarBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow   // try .withinWindow to blur the map instead of the desktop
+        view.state = .active                // stays the same when the window isn't key
+        return view
+    }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
 struct ContentView: View {
     @ObservedObject var model: AppModel
     @Environment(\.colorScheme) private var colorScheme
@@ -15,8 +27,11 @@ struct ContentView: View {
     @State private var centeredInitially = false
     @State private var waitingToCenter = false
     private let sidebarWidth: CGFloat = 300
-    private var glassShade: Color { .black.opacity(colorScheme == .dark ? 0.22 : 0.035) }
-    private var sidebarShade: Color { .black.opacity(colorScheme == .dark ? 0.34 : 0.045) }
+
+    private var macIcon: NSImage {
+        NSImage(named: NSImage.computerName)
+            ?? NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: "This Mac")!
+    }
 
     var body: some View {
         MapReader { proxy in
@@ -24,10 +39,12 @@ struct ContentView: View {
                 if let fix = location.location {
                     MapCircle(center: fix.coordinate, radius: min(fix.horizontalAccuracy, 500))
                         .foregroundStyle(.blue.opacity(0.09))
-                    Annotation("My Location (Mac)", coordinate: fix.coordinate) {
-                        Circle().fill(.blue).frame(width: 13, height: 13)
-                            .overlay(Circle().stroke(.white, lineWidth: 3))
-                            .shadow(color: .black.opacity(0.2), radius: 3)
+                    Annotation("", coordinate: fix.coordinate) {
+                        Image(nsImage: macIcon).resizable().scaledToFit()
+                            .frame(width: 33, height: 33).padding(9)
+                            .background(.regularMaterial, in: Circle())
+                            .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 2))
+                            .help("This Mac’s location")
                             .accessibilityLabel("This Mac’s current location")
                     }
                 }
@@ -68,6 +85,10 @@ struct ContentView: View {
             }
         }
         .ignoresSafeArea(edges: .top)
+        .sheet(isPresented: $model.showWelcome) {
+            WelcomeView(showTroubleshooting: model.welcomeFromHelp) { model.dismissWelcome() }
+                .interactiveDismissDisabled()
+        }
         .task { location.start() }
         .onReceive(location.$location) { fix in
             guard let fix else { return }
@@ -93,7 +114,7 @@ struct ContentView: View {
                 Spacer()
                 Button { Task { await model.refresh() } } label: {
                     Image(systemName: "arrow.clockwise").frame(width: 36, height: 36)
-                        .glassEffect(.regular.tint(glassShade).interactive(), in: Circle())
+                        .glassEffect(.regular.interactive(), in: Circle())
                 }.buttonStyle(.plain).disabled(model.busy)
                     .help("Refresh connected devices").accessibilityLabel("Refresh connected devices")
             }.padding(.horizontal, 16).padding(.top, 54).padding(.bottom, 18)
@@ -140,7 +161,7 @@ struct ContentView: View {
                                     .font(.callout.weight(.medium))
                                     .foregroundStyle(model.busy ? Color.secondary : Color.red)
                                     .padding(.horizontal, 12).padding(.vertical, 8)
-                                    .glassEffect(.regular.tint(glassShade).interactive(), in: Capsule())
+                                    .glassEffect(.regular.interactive(), in: Capsule())
                             }.buttonStyle(.plain).disabled(model.busy)
                             Text("Restores your iPhone’s real location.").font(.caption2).foregroundStyle(.secondary)
                         }.padding(.vertical, 18)
@@ -158,7 +179,7 @@ struct ContentView: View {
                                 Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
                                     .buttonStyle(.plain).accessibilityLabel("Clear search")
                             }
-                        }.padding(11).glassEffect(.regular.tint(glassShade), in: RoundedRectangle(cornerRadius: 12))
+                        }.padding(11).glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
                         if model.results.isEmpty && model.searchMessage == nil {
                             Text("Search or click the map to choose a location.")
                                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -187,6 +208,7 @@ struct ContentView: View {
                             Label("iPhone unavailable", systemImage: "exclamationmark.circle").font(.callout.weight(.medium)).foregroundStyle(.orange)
                             Text(error).font(.caption).textSelection(.enabled)
                             Button("Reconnect") { Task { await model.refresh() } }.disabled(model.busy)
+                            Button("Open GeoSpoof Help") { model.showHelp() }
                         }.padding(.vertical, 18)
                     }
                     if let message = location.message {
@@ -201,10 +223,15 @@ struct ContentView: View {
                 }.padding(.horizontal, 16)
             }
             Spacer(minLength: 0)
-
         }
         .frame(maxHeight: .infinity)
-        .glassEffect(.regular.tint(sidebarShade), in: Rectangle())
+        .background { SidebarBackground() }
+        .overlay(alignment: .top) {
+            // Slightly lighter header, as in Find My.
+            LinearGradient(colors: [.white.opacity(colorScheme == .dark ? 0.07 : 0.30), .clear],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 120).allowsHitTesting(false)
+        }
         .overlay(alignment: .trailing) { Rectangle().fill(.separator).frame(width: 0.5) }
     }
 
@@ -214,27 +241,34 @@ struct ContentView: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 10) {
-            Spacer()
-            Button {
-                is3D.toggle()
-                adjustCamera(pitch: is3D ? 55 : 0)
-            } label: { Text(is3D ? "2D" : "3D").font(.callout.weight(.semibold)).frame(width: 44, height: 44)
-                .glassEffect(.regular.tint(glassShade).interactive(), in: Circle()) }
-                .buttonStyle(.plain).help(is3D ? "Show 2D map" : "Show 3D map")
-            HStack(spacing: 0) {
+        GlassEffectContainer(spacing: 10) {
+            HStack(spacing: 10) {
+                Spacer()
                 Button {
-                    if let fix = location.location { center(on: fix.coordinate); centeredInitially = true }
-                    else { waitingToCenter = true; location.start() }
-                } label: { Image(systemName: "location").font(.title3).frame(width: 43, height: 38) }
-                    .buttonStyle(.plain).help("Show my current location (Mac)").accessibilityLabel("My Location")
-                Button { mapOptions.toggle() } label: { Image(systemName: "map.fill").font(.title3).frame(width: 43, height: 38) }
-                    .buttonStyle(.plain).help("Map options").accessibilityLabel("Map options")
-                    .popover(isPresented: $mapOptions, arrowEdge: .bottom) { optionsPanel }
-            }.padding(3).glassEffect(.regular.tint(glassShade), in: Capsule())
+                    is3D.toggle()
+                    adjustCamera(pitch: is3D ? 55 : 0)
+                } label: {
+                    Text(is3D ? "2D" : "3D").font(.callout.weight(.semibold)).frame(width: 44, height: 44)
+                        .glassEffect(.regular.interactive(), in: Circle())
+                }.buttonStyle(.plain).help(is3D ? "Show 2D map" : "Show 3D map")
+                HStack(spacing: 0) {
+                    Button {
+                        if let fix = location.location { center(on: fix.coordinate); centeredInitially = true }
+                        else { waitingToCenter = true; location.start() }
+                    } label: { Image(systemName: "location").font(.title3).frame(width: 43, height: 38) }
+                        .buttonStyle(.plain).help("Show this Mac’s location").accessibilityLabel("My Location")
+                    Button { mapOptions.toggle() } label: { Image(systemName: "map.fill").font(.title3).frame(width: 43, height: 38) }
+                        .buttonStyle(.plain).help("Map options").accessibilityLabel("Map options")
+                        .popover(isPresented: $mapOptions, arrowEdge: .bottom) { optionsPanel }
+                }.padding(3).glassEffect(.regular, in: Capsule())
+            }
         }
         .padding(.horizontal, 16).frame(height: 58)
-        .background { Rectangle().fill(.ultraThinMaterial).opacity(topHovered || mapOptions ? 1 : 0) }
+        .background {
+            Rectangle().glassEffect(.regular, in: Rectangle())
+                .mask(LinearGradient(colors: [.black, .black, .clear], startPoint: .top, endPoint: .bottom))
+                .opacity(topHovered || mapOptions ? 1 : 0)
+        }
         .contentShape(Rectangle()).onHover { topHovered = $0 }
         .animation(.easeOut(duration: 0.18), value: topHovered)
     }
@@ -270,7 +304,7 @@ struct ContentView: View {
                 Button { zoom(0.5) } label: { Image(systemName: "plus").frame(width: 36, height: 35) }.accessibilityLabel("Zoom in")
                 Divider().frame(width: 24)
                 Button { zoom(2) } label: { Image(systemName: "minus").frame(width: 36, height: 35) }.accessibilityLabel("Zoom out")
-            }.buttonStyle(.plain).padding(3).glassEffect(.regular.tint(glassShade), in: Capsule())
+            }.buttonStyle(.plain).padding(3).glassEffect(.regular, in: Capsule())
         }
     }
 
@@ -297,7 +331,7 @@ struct ContentView: View {
             Text(model.transport == nil ? "Connect your iPhone to set this location." : "Applies to \(model.phoneName).")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(18).frame(width: 290)
-            .glassEffect(.regular.tint(glassShade), in: RoundedRectangle(cornerRadius: 22))
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22))
     }
 
     private func center(on coordinate: CLLocationCoordinate2D) {

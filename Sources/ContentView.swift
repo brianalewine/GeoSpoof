@@ -6,11 +6,56 @@ struct SidebarBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .sidebar
-        view.blendingMode = .behindWindow   // try .withinWindow to blur the map instead of the desktop
+        view.blendingMode = .withinWindow   // blurs the map behind the sidebar
         view.state = .active                // stays the same when the window isn't key
         return view
     }
     func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+/// Device badge as in Find My: a fixed-size translucent disc with a thin ring.
+struct MapBadge: View {
+    let image: NSImage
+    @Environment(\.colorScheme) private var colorScheme
+    var body: some View {
+        let dark = colorScheme == .dark
+        Image(nsImage: image).renderingMode(.original).resizable().scaledToFit()
+            .frame(width: 28, height: 28).padding(7)
+            .background(dark ? Color(white: 0.5, opacity: 0.45) : Color(white: 0.97, opacity: 0.6), in: Circle())
+            .background(.thinMaterial, in: Circle())
+            .overlay(Circle().stroke(dark ? Color(white: 0.7, opacity: 0.65) : .white, lineWidth: 1.5))
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+    }
+}
+
+/// Apple Maps-style current-location dot. The blue core breathes but never fills the white disc.
+struct LocationDot: View {
+    @State private var breathe = false
+    var body: some View {
+        ZStack {
+            Circle().fill(Color(white: 0.55, opacity: 0.55)).frame(width: 30, height: 30)
+            Circle().fill(.white).frame(width: 24, height: 24)
+                .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            Circle().fill(Color(red: 0.04, green: 0.52, blue: 1.0)).frame(width: 24, height: 24)
+                .scaleEffect(breathe ? 0.80 : 0.64)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) { breathe = true }
+        }
+    }
+}
+
+/// The Mac's marker: dot underneath, device badge on top (as in Find My, where the badge covers the dot).
+/// Set dotOnTop to true to see the dot instead.
+struct MacMarker: View {
+    let icon: NSImage
+    var dotOnTop = false
+    var body: some View {
+        ZStack {
+            if dotOnTop { MapBadge(image: icon); LocationDot() }
+            else { LocationDot(); MapBadge(image: icon) }
+        }
+    }
 }
 
 struct ContentView: View {
@@ -26,6 +71,7 @@ struct ContentView: View {
     @State private var lastCamera: MapCamera?
     @State private var centeredInitially = false
     @State private var waitingToCenter = false
+    @State private var mapHeight: CGFloat = 700
     private let sidebarWidth: CGFloat = 300
 
     private var macIcon: NSImage {
@@ -37,23 +83,21 @@ struct ContentView: View {
         MapReader { proxy in
             Map(position: $model.camera) {
                 if let fix = location.location {
-                    MapCircle(center: fix.coordinate, radius: min(fix.horizontalAccuracy, 500))
-                        .foregroundStyle(.blue.opacity(0.09))
-                    Annotation("", coordinate: fix.coordinate) {
-                        Image(nsImage: macIcon).resizable().scaledToFit()
-                            .frame(width: 33, height: 33).padding(9)
-                            .background(.regularMaterial, in: Circle())
-                            .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 2))
+                    // The accuracy circle scales with zoom and gives way to the dot once it gets small.
+                    if accuracyScreenRadius(fix) > 26 {
+                        MapCircle(center: fix.coordinate, radius: min(fix.horizontalAccuracy, 500))
+                            .foregroundStyle(.blue.opacity(0.12))
+                            .stroke(.white.opacity(0.85), lineWidth: 3)
+                    }
+                    Annotation("This Mac", coordinate: fix.coordinate, anchor: .center) {
+                        MacMarker(icon: macIcon)
                             .help("This Mac’s location")
                             .accessibilityLabel("This Mac’s current location")
                     }
                 }
                 if let coordinate = model.activeCoordinate, let phone = selectedPhone {
-                    Annotation(phone.name, coordinate: coordinate) {
-                        Image(nsImage: DeviceArtwork.image(for: phone)).renderingMode(.original).resizable().scaledToFit()
-                            .frame(width: 33, height: 33).padding(9)
-                            .background(.regularMaterial, in: Circle())
-                            .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 2))
+                    Annotation(phone.name, coordinate: coordinate, anchor: .center) {
+                        MapBadge(image: DeviceArtwork.image(for: phone))
                             .help("Last simulated location sent to this iPhone")
                     }
                 }
@@ -61,9 +105,9 @@ struct ContentView: View {
                     Marker(place.name, coordinate: place.coordinate).tint(.orange)
                 }
             }
-            .mapStyle(satellite ? (traffic ? .hybrid(elevation: .realistic, showsTraffic: true) : .imagery(elevation: .realistic)) : .standard(elevation: .realistic, showsTraffic: traffic))
-            .id(satellite)
+            .mapStyle(satellite ? .hybrid(elevation: .realistic, showsTraffic: traffic) : .standard(elevation: .realistic, showsTraffic: traffic))
             .mapControls { }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { mapHeight = $0 }
             .onMapCameraChange(frequency: .onEnd) { context in
                 model.region = context.region
                 lastCamera = context.camera
@@ -98,11 +142,18 @@ struct ContentView: View {
                 waitingToCenter = false
             }
         }
-        .onChange(of: model.query) { _, _ in model.cancelSearch() }
-        .onKeyPress(.escape) { model.selection = nil; model.cancelSearch(); searchFocused = false; return .handled }
+        .onChange(of: model.query) { _, _ in model.queryChanged() }
         .background {
             Button("Search Places") { searchFocused = true }.keyboardShortcut("f").hidden().accessibilityHidden(true)
+            // A shortcut works even when no view has keyboard focus (the map never does).
+            Button("Dismiss Pin") { model.selection = nil; model.cancelSearch(); searchFocused = false }
+                .keyboardShortcut(.escape, modifiers: []).hidden().accessibilityHidden(true)
         }
+    }
+
+    private func accuracyScreenRadius(_ fix: CLLocation) -> Double {
+        let metersPerPoint = max(model.region.span.latitudeDelta * 111_320 / max(Double(mapHeight), 1), 0.01)
+        return min(fix.horizontalAccuracy, 500) / metersPerPoint
     }
 
     private var selectedPhone: Phone? { model.phones.first { $0.id == model.selectedID } }
@@ -173,7 +224,7 @@ struct ContentView: View {
                             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                             TextField("Search places or addresses", text: $model.query)
                                 .textFieldStyle(.plain).focused($searchFocused)
-                                .onSubmit { Task { await model.searchPlaces() } }
+                                .onSubmit { Task { await model.searchNow() } }
                             if model.searching { ProgressView().controlSize(.mini) }
                             else if !model.query.isEmpty {
                                 Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
@@ -228,9 +279,14 @@ struct ContentView: View {
         .background { SidebarBackground() }
         .overlay(alignment: .top) {
             // Slightly lighter header, as in Find My.
-            LinearGradient(colors: [.white.opacity(colorScheme == .dark ? 0.07 : 0.30), .clear],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: 120).allowsHitTesting(false)
+            ZStack {
+                LinearGradient(colors: [.white.opacity(colorScheme == .dark ? 0.08 : 0.30),
+                                        .white.opacity(colorScheme == .dark ? 0.03 : 0.10), .clear],
+                               startPoint: .top, endPoint: .bottom)
+                RadialGradient(colors: [.white.opacity(colorScheme == .dark ? 0.09 : 0.25), .clear],
+                               center: .topLeading, startRadius: 0, endRadius: 280)
+            }
+            .frame(height: 260).allowsHitTesting(false)
         }
         .overlay(alignment: .trailing) { Rectangle().fill(.separator).frame(width: 0.5) }
     }
@@ -264,13 +320,18 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 16).frame(height: 58)
-        .background {
-            Rectangle().glassEffect(.regular, in: Rectangle())
-                .mask(LinearGradient(colors: [.black, .black, .clear], startPoint: .top, endPoint: .bottom))
-                .opacity(topHovered || mapOptions ? 1 : 0)
+        .background(alignment: .top) {
+            ZStack(alignment: .bottom) {
+                Rectangle().fill(.thinMaterial)
+                Rectangle().fill(.white.opacity(colorScheme == .dark ? 0.12 : 0.30))
+                Rectangle().fill(.white.opacity(colorScheme == .dark ? 0.16 : 0.40)).frame(height: 0.5)
+            }
+            .frame(height: 58)
+            .opacity(topHovered || mapOptions ? 1 : 0)
+            .animation(.easeOut(duration: 0.2), value: topHovered || mapOptions)
+            .allowsHitTesting(false)
         }
         .contentShape(Rectangle()).onHover { topHovered = $0 }
-        .animation(.easeOut(duration: 0.18), value: topHovered)
     }
 
     private var optionsPanel: some View {
@@ -334,18 +395,21 @@ struct ContentView: View {
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22))
     }
 
+    private func moveCamera(_ camera: MapCamera) {
+        withAnimation(.easeInOut(duration: 0.9)) { model.camera = .camera(camera) }
+    }
     private func center(on coordinate: CLLocationCoordinate2D) {
-        model.camera = .camera(MapCamera(centerCoordinate: coordinate, distance: 1800, heading: 0, pitch: is3D ? 55 : 0))
+        moveCamera(MapCamera(centerCoordinate: coordinate, distance: 1800, heading: 0, pitch: is3D ? 55 : 0))
     }
     private func adjustCamera(pitch: Double? = nil, heading: Double? = nil) {
-        model.camera = .camera(MapCamera(centerCoordinate: lastCamera?.centerCoordinate ?? model.region.center,
-                                        distance: lastCamera?.distance ?? 2000,
-                                        heading: heading ?? lastCamera?.heading ?? 0,
-                                        pitch: pitch ?? lastCamera?.pitch ?? 0))
+        moveCamera(MapCamera(centerCoordinate: lastCamera?.centerCoordinate ?? model.region.center,
+                             distance: lastCamera?.distance ?? 2000,
+                             heading: heading ?? lastCamera?.heading ?? 0,
+                             pitch: pitch ?? lastCamera?.pitch ?? 0))
     }
     private func zoom(_ factor: Double) {
-        model.camera = .camera(MapCamera(centerCoordinate: lastCamera?.centerCoordinate ?? model.region.center,
-                                        distance: min(40_000_000, max(80, (lastCamera?.distance ?? 2000) * factor)),
-                                        heading: lastCamera?.heading ?? 0, pitch: lastCamera?.pitch ?? 0))
+        moveCamera(MapCamera(centerCoordinate: lastCamera?.centerCoordinate ?? model.region.center,
+                             distance: min(40_000_000, max(80, (lastCamera?.distance ?? 2000) * factor)),
+                             heading: lastCamera?.heading ?? 0, pitch: lastCamera?.pitch ?? 0))
     }
 }

@@ -55,12 +55,14 @@ final class AppModel: ObservableObject {
 
     private var search: MKLocalSearch?
     private var searchGeneration = UUID()
+    private var debounce: Task<Void, Never>?
     private var supported = false
+    var quitting = false   // set while the app is quitting so no new background refresh starts
     var phoneName: String { phones.first { $0.id == selectedID }?.name ?? "Connect iPhone" }
     var canSet: Bool { selection != nil && transport != nil && !busy && (pendingID == nil || pendingID == selectedID) }
 
     func refresh() async {
-        guard !busy else { return }
+        guard !busy, !quitting else { return }
         busy = true
         defer { busy = false }
         error = nil
@@ -113,10 +115,28 @@ final class AppModel: ObservableObject {
         searchMessage = nil
     }
 
-    func searchPlaces() async {
-        cancelSearch()
+    /// Called on every keystroke: waits for a short pause, then searches. Old results stay until new ones arrive.
+    func queryChanged() {
+        debounce?.cancel()
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard text.count >= 2 else { cancelSearch(); return }
+        debounce = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            await searchPlaces()
+        }
+    }
+
+    /// Return key: search immediately.
+    func searchNow() async {
+        debounce?.cancel()
+        await searchPlaces()
+    }
+
+    func searchPlaces() async {
+        search?.cancel()
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { cancelSearch(); return }
         let generation = UUID()
         searchGeneration = generation
         searching = true
@@ -153,6 +173,7 @@ final class AppModel: ObservableObject {
             activeName = place.name
             activePlaceID = place.id
             activeCoordinate = place.coordinate
+            selection = nil   // close the pin card; the phone badge now marks the location
             notice = "Location set on your iPhone"
         } catch {
             activeName = nil

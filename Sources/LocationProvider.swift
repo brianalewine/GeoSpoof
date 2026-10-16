@@ -12,7 +12,7 @@ final class LocationProvider: NSObject, ObservableObject, @preconcurrency CLLoca
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        manager.distanceFilter = 25
+        manager.distanceFilter = kCLDistanceFilterNone
     }
 
     func start() {
@@ -23,6 +23,9 @@ final class LocationProvider: NSObject, ObservableObject, @preconcurrency CLLoca
         case .authorizedAlways, .authorizedWhenInUse:
             requesting = true
             message = nil
+            // Show the system's last known fix right away; a fresh one replaces it when it arrives.
+            if location == nil, let cached = manager.location, cached.horizontalAccuracy >= 0,
+               abs(cached.timestamp.timeIntervalSinceNow) < 3600 { location = cached }
             manager.startUpdatingLocation()
         case .denied, .restricted:
             requesting = false

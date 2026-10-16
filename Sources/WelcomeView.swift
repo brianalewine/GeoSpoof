@@ -23,10 +23,9 @@ struct WelcomeView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("iPhone not connecting?", systemImage: "exclamationmark.triangle").font(.headline)
                     Text("""
-                    1. Fully unlink the iPhone: on the iPhone, open Settings → General → Transfer or Reset iPhone → Reset → Reset Location & Privacy. This makes it forget trusted computers.
-                    2. Restart the iPhone.
-                    3. Reconnect it by USB, unlock it, and tap Trust when asked.
-                    4. In GeoSpoof, press ⇧⌘R to refresh.
+                    1. Restart the iPhone.
+                    2. Reconnect it by USB, unlock it, and tap Trust when asked.
+                    3. In GeoSpoof, press ⇧⌘R to refresh.
                     """).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(14).frame(maxWidth: .infinity, alignment: .leading)

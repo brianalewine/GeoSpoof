@@ -1,0 +1,317 @@
+import SwiftUI
+import MapKit
+
+struct ContentView: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
+    @StateObject private var location = LocationProvider()
+    @FocusState private var searchFocused: Bool
+    @State private var topHovered = false
+    @State private var mapOptions = false
+    @State private var satellite = false
+    @State private var traffic = false
+    @State private var is3D = false
+    @State private var lastCamera: MapCamera?
+    @State private var centeredInitially = false
+    @State private var waitingToCenter = false
+    private let sidebarWidth: CGFloat = 300
+    private var glassShade: Color { .black.opacity(colorScheme == .dark ? 0.22 : 0.035) }
+    private var sidebarShade: Color { .black.opacity(colorScheme == .dark ? 0.34 : 0.045) }
+
+    var body: some View {
+        MapReader { proxy in
+            Map(position: $model.camera) {
+                if let fix = location.location {
+                    MapCircle(center: fix.coordinate, radius: min(fix.horizontalAccuracy, 500))
+                        .foregroundStyle(.blue.opacity(0.09))
+                    Annotation("My Location (Mac)", coordinate: fix.coordinate) {
+                        Circle().fill(.blue).frame(width: 13, height: 13)
+                            .overlay(Circle().stroke(.white, lineWidth: 3))
+                            .shadow(color: .black.opacity(0.2), radius: 3)
+                            .accessibilityLabel("This Mac’s current location")
+                    }
+                }
+                if let coordinate = model.activeCoordinate, let phone = selectedPhone {
+                    Annotation(phone.name, coordinate: coordinate) {
+                        Image(nsImage: DeviceArtwork.image(for: phone)).renderingMode(.original).resizable().scaledToFit()
+                            .frame(width: 33, height: 33).padding(9)
+                            .background(.regularMaterial, in: Circle())
+                            .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 2))
+                            .help("Last simulated location sent to this iPhone")
+                    }
+                }
+                if let place = model.selection, model.activePlaceID != place.id {
+                    Marker(place.name, coordinate: place.coordinate).tint(.orange)
+                }
+            }
+            .mapStyle(satellite ? (traffic ? .hybrid(elevation: .realistic, showsTraffic: true) : .imagery(elevation: .realistic)) : .standard(elevation: .realistic, showsTraffic: traffic))
+            .id(satellite)
+            .mapControls { }
+            .onMapCameraChange(frequency: .onEnd) { context in
+                model.region = context.region
+                lastCamera = context.camera
+                is3D = context.camera.pitch > 10
+            }
+            .onTapGesture { point in
+                guard let coordinate = proxy.convert(point, from: .local) else { return }
+                model.pin(coordinate)
+                searchFocused = false
+                centeredInitially = true
+            }
+            .safeAreaInset(edge: .leading, spacing: 0) { sidebar.frame(width: sidebarWidth) }
+            .overlay(alignment: .top) { topBar.padding(.leading, sidebarWidth) }
+            .overlay(alignment: .bottomTrailing) { navigationControls.padding(.trailing, 18).padding(.bottom, 34) }
+            .overlay(alignment: .bottomLeading) {
+                if let place = model.selection {
+                    placeCard(place).padding(.leading, sidebarWidth + 20).padding(.bottom, 34)
+                }
+            }
+        }
+        .ignoresSafeArea(edges: .top)
+        .task { location.start() }
+        .onReceive(location.$location) { fix in
+            guard let fix else { return }
+            if waitingToCenter || (!centeredInitially && model.selection == nil) {
+                center(on: fix.coordinate)
+                centeredInitially = true
+                waitingToCenter = false
+            }
+        }
+        .onChange(of: model.query) { _, _ in model.cancelSearch() }
+        .onKeyPress(.escape) { model.selection = nil; model.cancelSearch(); searchFocused = false; return .handled }
+        .background {
+            Button("Search Places") { searchFocused = true }.keyboardShortcut("f").hidden().accessibilityHidden(true)
+        }
+    }
+
+    private var selectedPhone: Phone? { model.phones.first { $0.id == model.selectedID } }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("GeoSpoof").font(.system(size: 25, weight: .bold))
+                Spacer()
+                Button { Task { await model.refresh() } } label: {
+                    Image(systemName: "arrow.clockwise").frame(width: 36, height: 36)
+                        .glassEffect(.regular.tint(glassShade).interactive(), in: Circle())
+                }.buttonStyle(.plain).disabled(model.busy)
+                    .help("Refresh connected devices").accessibilityLabel("Refresh connected devices")
+            }.padding(.horizontal, 16).padding(.top, 54).padding(.bottom, 18)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("My Devices").font(.callout.weight(.bold)).foregroundStyle(.secondary)
+                        .padding(.top, 18).padding(.bottom, 12)
+                    if model.phones.isEmpty {
+                        Label("Connect and trust your iPhone using USB to get started.", systemImage: "iphone")
+                            .font(.callout).foregroundStyle(.secondary).padding(.vertical, 12)
+                    }
+                    ForEach(model.phones) { phone in
+                        Button {
+                            guard !model.busy, model.pendingID == nil else { return }
+                            model.selectedID = phone.id
+                            Task { await model.refresh() }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(nsImage: DeviceArtwork.image(for: phone)).renderingMode(.original).resizable().scaledToFit()
+                                    .frame(width: 28, height: 28).padding(7)
+                                    .background(.quaternary.opacity(0.65), in: Circle())
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(phone.name).font(.callout.weight(.semibold)).foregroundStyle(.primary)
+                                    Text(phone.id == model.selectedID ? connectionText : phone.model)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                if phone.id == model.selectedID {
+                                    Circle().fill(model.transport == nil ? .orange : .green).frame(width: 6, height: 6)
+                                }
+                            }.padding(.vertical, 12).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                            .disabled(model.busy || (model.pendingID != nil && phone.id != model.selectedID))
+                        Divider().padding(.leading, 52)
+                    }
+                    if model.pendingID != nil {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label(model.activeName == nil ? "Location status unknown" : "Location is set", systemImage: "location.fill")
+                                .font(.callout.weight(.semibold))
+                            if let name = model.activeName { Text(name).font(.caption).foregroundStyle(.secondary) }
+                            Button(role: .destructive) { Task { await model.reset() } } label: {
+                                Label("Stop Spoofing", systemImage: "stop.circle")
+                                    .font(.callout.weight(.medium))
+                                    .foregroundStyle(model.busy ? Color.secondary : Color.red)
+                                    .padding(.horizontal, 12).padding(.vertical, 8)
+                                    .glassEffect(.regular.tint(glassShade).interactive(), in: Capsule())
+                            }.buttonStyle(.plain).disabled(model.busy)
+                            Text("Restores your iPhone’s real location.").font(.caption2).foregroundStyle(.secondary)
+                        }.padding(.vertical, 18)
+                        Divider()
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Choose a Location").font(.headline)
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                            TextField("Search places or addresses", text: $model.query)
+                                .textFieldStyle(.plain).focused($searchFocused)
+                                .onSubmit { Task { await model.searchPlaces() } }
+                            if model.searching { ProgressView().controlSize(.mini) }
+                            else if !model.query.isEmpty {
+                                Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                                    .buttonStyle(.plain).accessibilityLabel("Clear search")
+                            }
+                        }.padding(11).glassEffect(.regular.tint(glassShade), in: RoundedRectangle(cornerRadius: 12))
+                        if model.results.isEmpty && model.searchMessage == nil {
+                            Text("Search or click the map to choose a location.")
+                                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }.padding(.top, 22).padding(.bottom, 12)
+                    ForEach(model.results) { place in
+                        Button {
+                            model.choose(place)
+                            searchFocused = false
+                            centeredInitially = true
+                        } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "mappin.circle.fill").font(.title2).foregroundStyle(.orange)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(place.name).font(.callout.weight(.medium)).foregroundStyle(.primary)
+                                    Text(place.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                                Spacer(minLength: 0)
+                            }.padding(.vertical, 10).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        Divider()
+                    }
+                    if let message = model.searchMessage { Text(message).font(.caption).foregroundStyle(.secondary).padding(.vertical, 12) }
+                    if let error = model.error {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("iPhone unavailable", systemImage: "exclamationmark.circle").font(.callout.weight(.medium)).foregroundStyle(.orange)
+                            Text(error).font(.caption).textSelection(.enabled)
+                            Button("Reconnect") { Task { await model.refresh() } }.disabled(model.busy)
+                        }.padding(.vertical, 18)
+                    }
+                    if let message = location.message {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("My Location", systemImage: "location").font(.callout.weight(.medium))
+                            Text(message).font(.caption).foregroundStyle(.secondary)
+                            Button("Location Settings") {
+                                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices")!)
+                            }
+                        }.padding(.vertical, 18)
+                    }
+                }.padding(.horizontal, 16)
+            }
+            Spacer(minLength: 0)
+
+        }
+        .frame(maxHeight: .infinity)
+        .glassEffect(.regular.tint(sidebarShade), in: Rectangle())
+        .overlay(alignment: .trailing) { Rectangle().fill(.separator).frame(width: 0.5) }
+    }
+
+    private var connectionText: String {
+        if model.busy { return "Updating…" }
+        return model.transport.map { "\($0) · Connected" } ?? "No connection"
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 10) {
+            Spacer()
+            Button {
+                is3D.toggle()
+                adjustCamera(pitch: is3D ? 55 : 0)
+            } label: { Text(is3D ? "2D" : "3D").font(.callout.weight(.semibold)).frame(width: 44, height: 44)
+                .glassEffect(.regular.tint(glassShade).interactive(), in: Circle()) }
+                .buttonStyle(.plain).help(is3D ? "Show 2D map" : "Show 3D map")
+            HStack(spacing: 0) {
+                Button {
+                    if let fix = location.location { center(on: fix.coordinate); centeredInitially = true }
+                    else { waitingToCenter = true; location.start() }
+                } label: { Image(systemName: "location").font(.title3).frame(width: 43, height: 38) }
+                    .buttonStyle(.plain).help("Show my current location (Mac)").accessibilityLabel("My Location")
+                Button { mapOptions.toggle() } label: { Image(systemName: "map.fill").font(.title3).frame(width: 43, height: 38) }
+                    .buttonStyle(.plain).help("Map options").accessibilityLabel("Map options")
+                    .popover(isPresented: $mapOptions, arrowEdge: .bottom) { optionsPanel }
+            }.padding(3).glassEffect(.regular.tint(glassShade), in: Capsule())
+        }
+        .padding(.horizontal, 16).frame(height: 58)
+        .background { Rectangle().fill(.ultraThinMaterial).opacity(topHovered || mapOptions ? 1 : 0) }
+        .contentShape(Rectangle()).onHover { topHovered = $0 }
+        .animation(.easeOut(duration: 0.18), value: topHovered)
+    }
+
+    private var optionsPanel: some View {
+        VStack(spacing: 22) {
+            Text("Map Modes").font(.headline)
+            HStack(spacing: 14) {
+                modeButton("Standard", satelliteMode: false)
+                modeButton("Satellite", satelliteMode: true)
+            }
+            Toggle("Traffic", isOn: $traffic).toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(16)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
+            Text("Map data © Apple and its providers").font(.caption2).foregroundStyle(.tertiary)
+        }.padding(24).frame(width: 320)
+    }
+
+    private func modeButton(_ title: String, satelliteMode: Bool) -> some View {
+        Button { satellite = satelliteMode } label: {
+            VStack(spacing: 8) {
+                MapModePreview(region: model.region, satellite: satelliteMode)
+                    .frame(width: 144, height: 88).clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(satellite == satelliteMode ? Color.blue : .clear, lineWidth: 3))
+                Text(title).font(.callout.weight(.medium))
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel(title).accessibilityAddTraits(satellite == satelliteMode ? .isSelected : [])
+    }
+
+    private var navigationControls: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            VStack(spacing: 0) {
+                Button { zoom(0.5) } label: { Image(systemName: "plus").frame(width: 36, height: 35) }.accessibilityLabel("Zoom in")
+                Divider().frame(width: 24)
+                Button { zoom(2) } label: { Image(systemName: "minus").frame(width: 36, height: 35) }.accessibilityLabel("Zoom out")
+            }.buttonStyle(.plain).padding(3).glassEffect(.regular.tint(glassShade), in: Capsule())
+        }
+    }
+
+    private func placeCard(_ place: Place) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "mappin.circle.fill").font(.system(size: 30)).foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(place.name).font(.headline)
+                    Text(String(format: "%.5f, %.5f", place.coordinate.latitude, place.coordinate.longitude))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button { model.selection = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain).help("Dismiss pin").accessibilityLabel("Dismiss pin")
+            }
+            Button { Task { await model.setLocation() } } label: {
+                HStack {
+                    if model.busy { ProgressView().controlSize(.small) }
+                    Text(model.activePlaceID == place.id ? "Location Set" : "Set Location").fontWeight(.semibold)
+                }.frame(maxWidth: .infinity).padding(.vertical, 3)
+            }.buttonStyle(.glassProminent).tint(.blue).controlSize(.large)
+                .disabled(!model.canSet || model.activePlaceID == place.id)
+            Text(model.transport == nil ? "Connect your iPhone to set this location." : "Applies to \(model.phoneName).")
+                .font(.caption).foregroundStyle(.secondary)
+        }.padding(18).frame(width: 290)
+            .glassEffect(.regular.tint(glassShade), in: RoundedRectangle(cornerRadius: 22))
+    }
+
+    private func center(on coordinate: CLLocationCoordinate2D) {
+        model.camera = .camera(MapCamera(centerCoordinate: coordinate, distance: 1800, heading: 0, pitch: is3D ? 55 : 0))
+    }
+    private func adjustCamera(pitch: Double? = nil, heading: Double? = nil) {
+        model.camera = .camera(MapCamera(centerCoordinate: lastCamera?.centerCoordinate ?? model.region.center,
+                                        distance: lastCamera?.distance ?? 2000,
+                                        heading: heading ?? lastCamera?.heading ?? 0,
+                                        pitch: pitch ?? lastCamera?.pitch ?? 0))
+    }
+    private func zoom(_ factor: Double) {
+        model.camera = .camera(MapCamera(centerCoordinate: lastCamera?.centerCoordinate ?? model.region.center,
+                                        distance: min(40_000_000, max(80, (lastCamera?.distance ?? 2000) * factor)),
+                                        heading: lastCamera?.heading ?? 0, pitch: lastCamera?.pitch ?? 0))
+    }
+}

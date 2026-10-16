@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>GeoSpoof</string>
+<key>CFBundleIdentifier</key><string>local.brian.GeoSpoof</string>
+<key>CFBundleName</key><string>GeoSpoof</string>
+<key>CFBundleIconFile</key><string>GeoSpoof</string>
+<key>CFBundleDisplayName</key><string>GeoSpoof</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.4.1</string>
+<key>CFBundleVersion</key><string>5</string>
+<key>NSLocationUsageDescription</key><string>Show your Mac’s current location on the map so you can choose nearby places. This does not read the iPhone’s real location.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>Show your current location on the map while GeoSpoof is open.</string>
+<key>LSMinimumSystemVersion</key><string>26.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>Connect to your trusted iPhone to set and reset its simulated location over Wi-Fi.</string>
+</dict></plist>

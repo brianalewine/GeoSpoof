@@ -1,10 +1,19 @@
 # GeoSpoof
 
-A small native Mac utility for setting a trusted iPhone's simulated location over USB or local Wi-Fi. Built with SwiftUI, MapKit, and native Liquid Glass. Uses the installed Xcode device tool; no Python runtime or phone app is bundled.
+A small native Mac utility for setting a trusted iPhone's simulated location over USB or local Wi-Fi. Built with SwiftUI, MapKit, and native Liquid Glass. Talks to the iPhone through a small Python helper (`Sources/geospoof_helper.py`, built on pymobiledevice3), so end users do not need Xcode. No phone app is installed.
 
 ## Run
 
-Open `build/GeoSpoof.app`. Keep Xcode 27 installed and selected as the active developer directory. This build targets Apple silicon and macOS 26 or later; the verified setup is macOS 27.0, Xcode 27.0, and iPhone 13 Pro on iOS 27.2.
+Open `build/GeoSpoof.app`. This build targets Apple silicon and macOS 26 or later; the verified setup is macOS 27.0 and iPhone 13 Pro on iOS 27.2. Xcode is needed only to build the app, not to run it. The first time on a phone, the Mac needs internet to install Apple's developer support image on it.
+
+The built app includes its Python runtime and device dependencies. Developers create a build environment once (Python 3.13):
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r build-requirements.txt
+```
+
+Recreate `.venv` if you move the project folder.
 
 1. Keep your trusted iPhone on the same Wi-Fi, or connect USB. Developer Mode must be enabled.
 2. Allow macOS location access to show this Mac's current position. The blue dot is the Mac's location, not a live reading of the iPhone.
@@ -16,7 +25,7 @@ The top-right controls provide 2D/3D, My Location, and Map Modes (Standard, Sate
 
 Dropping a pin and searching never change the phone by themselves. The map marker represents the selected destination, not a live location reading from the phone. Location simulation is system-level, but individual apps may handle it differently.
 
-The app attempts to reset an active simulation when quitting. If the phone is unreachable, it offers to stay open and retains a recovery reminder across launches. Reset always targets the phone with a possibly active session, even if a different phone is selected. Force quitting or network loss cannot guarantee immediate restoration; reconnect and use Stop Spoofing.
+GeoSpoof holds the simulation channel open until Stop Spoofing or app exit. Connection loss can end the session, but is not proof that every phone app has refreshed its location. Reconnect and use Stop Spoofing to explicitly clear it. The app retains a recovery reminder across launches and targets the original phone for reset.
 
 Shortcuts: **⌘F** focuses search; **⌘R** stops spoofing; **⇧⌘R** refreshes the phone connection; **Escape** dismisses the selected pin/search results.
 
@@ -27,12 +36,14 @@ Set Location sends one coordinate, not a route. Apple Maps on the iPhone may ani
 ```sh
 bash scripts/build.sh
 bash scripts/test.sh
-build/checks --live
+bash scripts/test.sh --live
+.venv/bin/python Tests/check_bundle.py
+.venv/bin/python Sources/geospoof_helper.py --demo   # sets Barracks Road, waits, clears
 ```
 
-The last command additionally checks real device connectivity and MapKit search; it does not set a location. Offline checks cover response parsing, deduplication, coordinate bounds, session persistence, failed reset, and recovery targeting. Development tools may need access to local device services outside a restrictive execution sandbox.
+The `--live` check verifies connectivity and MapKit search without setting a location. The `--demo` command sets the displayed coordinate and waits for Return before clearing it. Offline checks cover the Swift/Python protocol, coordinate bounds, channel reuse, cleanup, session persistence, failed reset, and recovery targeting. Development tools may need access to local device services outside a restrictive execution sandbox.
 
-The app is ad-hoc signed for local use. It is not notarized or prepared for public distribution. No third-party packages are needed to build it. The earlier `.venv` and `research-requirements.txt` are research-only and are excluded from the app bundle.
+The app is ad-hoc signed for local use. It is not notarized or prepared for public distribution. No third-party Swift packages are needed to build it. The build bundles Python and dependencies with PyInstaller. End users need neither Xcode nor a Python installation. The UI still uses SwiftUI; Xcode is only a build dependency. `GEOSPOOF_PYTHON` and `GEOSPOOF_HELPER` can override the bundled helper for development.
 
 ## Design and implementation
 
@@ -52,3 +63,17 @@ The research and tested hardware history are in `RESEARCH.md`. Extended sleep/wa
 Utility controls use neutral, untinted Liquid Glass; blue is reserved for Set Location. The sidebar and search field use native glass. Redundant map instructions, the footer, and the compass button have been removed. Device artwork preserves its original colors. Map-mode buttons use static MapKit snapshots instead of embedded interactive maps, and switching modes recreates the map with the selected imagery configuration while retaining its camera binding.
 
 The installed devicectl info commands do not expose a live iPhone GPS readout. Mac location is a preview aid only. A phone-side app or permission-granted webpage could relay the phone's reported position, but during simulation that position may itself be simulated; it is not a reliable independent source of real GPS.
+
+## Verify without USB or Xcode
+
+1. Quit any older GeoSpoof instance and open the newly built app.
+2. Connect your iPhone by USB, unlock it, accept Trust, and enable Developer Mode.
+3. Refresh in GeoSpoof (⇧⌘R). This enables the trusted phone's Wi-Fi connections.
+4. Stop any existing simulation, unplug USB, and keep Mac and iPhone on the same Wi-Fi. Refresh again and confirm **Wi-Fi**.
+5. Select a distant map pin and press **Set Location**. Check the blue dot in Apple Maps on the iPhone, then set a second pin and check again.
+6. Press **Stop Spoofing** and confirm Apple Maps returns to the real position.
+7. Quit and relaunch with USB still unplugged; repeat. Test sleep/wake and reconnect separately.
+
+If discovery fails, unlock the phone, avoid guest Wi-Fi/client isolation, and reconnect USB to refresh once. Finder's “Show this iPhone when on Wi-Fi” is another way to enable network discovery. First developer-image preparation needs internet; allow up to three minutes. No cryptex uninstall or sudo command is needed.
+
+To check deployment independently of the source folder, copy the app elsewhere and run it with the project unavailable. The bundled helper should still work. A Mac without Xcode is the final end-user acceptance check. Current device behavior is verified only when you complete the phone-side checks above.

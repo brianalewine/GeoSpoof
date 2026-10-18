@@ -35,7 +35,7 @@ final class AppModel: ObservableObject {
     var region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 38.052, longitude: -78.501), span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1))
     let service: any DeviceControlling
     private let defaults: UserDefaults
-    init(service: any DeviceControlling = DeviceService(), defaults: UserDefaults = .standard) {
+    init(service: any DeviceControlling = PythonDeviceService(), defaults: UserDefaults = .standard) {
         self.service = service
         self.defaults = defaults
         selectedID = defaults.string(forKey: "selectedPhone") ?? ""
@@ -69,10 +69,7 @@ final class AppModel: ObservableObject {
         transport = nil
         do {
             if !supported {
-                let help = try await service.run(["device", "simulate", "location", "coordinate", "--help"], json: false)
-                guard String(decoding: help, as: UTF8.self).contains("--latitude") else {
-                    throw DeviceError.message("Install and select Xcode 27 or later to control your iPhone's location.")
-                }
+                try await service.prepare()
                 supported = true
             }
             phones = try await service.discover()
@@ -84,6 +81,12 @@ final class AppModel: ObservableObject {
             transport = try await service.verify(selectedID)
             defaults.set(selectedID, forKey: "selectedPhone")
             notice = nil
+            if let pendingID, await service.simulationActive(pendingID) == false {
+                activeName = nil
+                activePlaceID = nil
+                activeCoordinate = nil
+                notice = "The location session ended. Use Stop Spoofing to confirm restoration."
+            }
         } catch {
             if pendingID != nil { activeName = nil; activePlaceID = nil }
             self.error = error.localizedDescription

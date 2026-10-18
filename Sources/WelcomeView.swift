@@ -11,7 +11,7 @@ struct WelcomeView: View {
                 .font(.system(size: 28, weight: .bold))
             VStack(alignment: .leading, spacing: 18) {
                 row("cable.connector", "Connect your iPhone",
-                    "Plug it in with USB, unlock it, and tap Trust. After that it can work over the same Wi-Fi.")
+                    "Plug it in with USB, unlock it, and tap Trust. Refresh in GeoSpoof once over USB to enable Wi-Fi connections. Then unplug it and refresh on the same Wi-Fi.")
                 row("hammer", "Turn on Developer Mode",
                     "On the iPhone: Settings → Privacy & Security → Developer Mode. It will restart once.")
                 row("mappin.and.ellipse", "Choose a place",

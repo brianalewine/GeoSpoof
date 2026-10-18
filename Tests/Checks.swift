@@ -5,7 +5,7 @@ final class FakeDevice: DeviceControlling {
     var fails = false
     var clearedID: String?
     var setCount = 0
-    func run(_ arguments: [String], json: Bool) async throws -> Data { Data("--latitude".utf8) }
+    func prepare() async throws {}
     func discover() async throws -> [Phone] { [Phone(id: "test-phone", name: "Test iPhone", model: "iPhone")] }
     func verify(_ id: String) async throws -> String { "Wi-Fi" }
     func set(_ id: String, latitude: Double, longitude: Double) async throws {
@@ -20,25 +20,6 @@ final class FakeDevice: DeviceControlling {
 
 @main struct Checks {
     @MainActor static func main() async throws {
-        let fixture = Data("""
-        {"result":{"devices":[
-        {"identifier":"core-id","properties":{"hardware":{"deviceType":"iPhone","udid":"phone","marketingName":"iPhone 13 Pro","productType":"iPhone14,2"},"state":{"name":"Phone"}}},
-        {"identifier":"duplicate","hardwareProperties":{"deviceType":"iPhone","udid":"phone"},"deviceProperties":{"name":"Duplicate"}},
-        {"identifier":"tablet","hardwareProperties":{"deviceType":"iPad"}}
-        ]}}
-        """.utf8)
-        let phones = try DeviceService.phones(from: fixture)
-        precondition(phones.count == 1 && phones[0].id == "phone")
-        precondition(phones[0].productType == "iPhone14,2")
-        for latitude in [Double.nan, .infinity, 91, -91] {
-            do { _ = try DeviceService.coordinateArguments(id: "a", latitude: latitude, longitude: 0); fatalError("Accepted invalid latitude") }
-            catch { }
-        }
-        do { _ = try DeviceService.coordinateArguments(id: "a", latitude: 0, longitude: 181); fatalError("Accepted invalid longitude") } catch { }
-        let args = try DeviceService.coordinateArguments(id: "name with spaces;literal", latitude: 38, longitude: -78)
-        precondition(args.contains("name with spaces;literal") && args.last == "--longitude=-78.0")
-        do { _ = try DeviceService.result(Data("{}".utf8)); fatalError("Accepted invalid schema") } catch { }
-
         let suite = "GeoSpoofTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -68,10 +49,32 @@ final class FakeDevice: DeviceControlling {
         fake.fails = true
         await model.setLocation()
         precondition(model.pendingID != nil && model.activeName == nil && model.transport == nil)
-        print("PASS: decoding, deduplication, coordinate validation, preview isolation, persistence, failed reset, recovery device identity, uncertain set")
+        print("PASS: preview isolation, persistence, failed reset, recovery device identity, uncertain set")
+
+        // The Swift side of the Python helper protocol, against a stand-in helper (no phone needed).
+        if ProcessInfo.processInfo.environment["GEOSPOOF_PYTHON"] != nil {
+            let python = PythonDeviceService()
+            try await python.prepare()
+            let found = try await python.discover()
+            precondition(found.count == 1 && found[0].id == "stub-phone" && found[0].productType == "iPhone14,2")
+            let transport = try await python.verify("stub-phone")
+            precondition(transport == "USB")
+            try await python.set("stub-phone", latitude: 38.0544087, longitude: -78.499656)
+            let active = await python.simulationActive("stub-phone")
+            precondition(active == true)
+            try await python.clear("stub-phone")
+            let inactive = await python.simulationActive("stub-phone")
+            precondition(inactive == false)
+            do { try await python.set("bad", latitude: 1, longitude: 1); fatalError("Accepted a bad device") }
+            catch { precondition(error.localizedDescription.contains("wasn't found")) }
+            print("PASS: Python helper protocol (stand-in helper)")
+        }
 
         if CommandLine.arguments.contains("--live") {
-            let service = DeviceService()
+            // Use the real helper for live checks.
+            if let real = ProcessInfo.processInfo.environment["GEOSPOOF_LIVE_HELPER"] { setenv("GEOSPOOF_HELPER", real, 1) }
+            let service = PythonDeviceService()
+            try await service.prepare()
             let devices = try await service.discover()
             print("Live discovery: \(devices.count) iPhone(s)")
             if let phone = devices.first { print("Live verification: \(try await service.verify(phone.id))") }

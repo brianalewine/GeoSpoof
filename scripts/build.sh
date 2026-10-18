@@ -9,5 +9,7 @@ if [ ! -f build/GeoSpoof.icns ] || [ scripts/icon.swift -nt build/GeoSpoof.icns 
     iconutil -c icns build/GeoSpoof.iconset -o build/GeoSpoof.icns
 fi
 cp build/GeoSpoof.icns build/GeoSpoof.app/Contents/Resources/GeoSpoof.icns
-codesign --force --sign - build/GeoSpoof.app
+bash scripts/bundle-helper.sh
+codesign --force --options runtime --sign - build/GeoSpoof.app
+codesign --verify --deep --strict build/GeoSpoof.app
 echo "Built build/GeoSpoof.app"

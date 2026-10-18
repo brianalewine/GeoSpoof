@@ -10,6 +10,16 @@ enum DeviceArtwork {
     }()
     private static var cache: [String: NSImage] = [:]
 
+    /// "iPhone 13 Pro" for productType "iPhone14,2", read from macOS's own device list.
+    static func displayName(for phone: Phone) -> String {
+        guard !phone.productType.isEmpty else { return phone.model }
+        let match = declarations.first { entry in
+            let tags = entry["UTTypeTagSpecification"] as? [String: Any] ?? [:]
+            return (tags["com.apple.device-model-code"] as? [String] ?? []).contains(phone.productType)
+        }
+        return match?["UTTypeDescription"] as? String ?? phone.model
+    }
+
     static func image(for phone: Phone) -> NSImage {
         let key = phone.productType.isEmpty ? phone.model : phone.productType
         if let image = cache[key] { return image }

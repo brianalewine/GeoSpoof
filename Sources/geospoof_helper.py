@@ -379,9 +379,28 @@ async def demo(udid: Optional[str]) -> None:
         await helper.close_session()
 
 
+async def check_connection() -> None:
+    """Read-only diagnostic usable from the packaged executable."""
+    import plistlib
+    from geospoof_security import signing_request
+    await asyncio.to_thread(signing_request, plistlib.dumps({}))
+    print("PASS: verified HTTPS signing endpoint", flush=True)
+    helper = Helper(lambda event: print(event.get("message", ""), flush=True))
+    devices = (await helper.discover({}))["devices"]
+    if len(devices) != 1:
+        raise HelperError("Connect exactly one iPhone for this diagnostic.", "no_device")
+    try:
+        helper.session = await helper._open_session(devices[0]["id"])
+        print("PASS: private Unix relay and developer channel over " + devices[0]["transport"], flush=True)
+    finally:
+        await helper.close_session()
+
+
 if __name__ == "__main__":
     initialize_storage()
-    if "--demo" in sys.argv:
+    if sys.argv[1:] == ["--check-connection"]:
+        asyncio.run(asyncio.wait_for(check_connection(), 120))
+    elif "--demo" in sys.argv:
         rest = [a for a in sys.argv[1:] if a != "--demo"]
         asyncio.run(demo(rest[0] if rest else None))
     else:

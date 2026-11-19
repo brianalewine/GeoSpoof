@@ -55,7 +55,12 @@ actor PythonDeviceService: DeviceControlling {
             return (URL(fileURLWithPath: python), URL(fileURLWithPath: helper))
         }
         #endif
-        guard let helper = Bundle.main.resourceURL?.appendingPathComponent("device-helper/geospoof-helper"),
+        #if arch(arm64)
+        let helperDirectory = "device-helper-arm64"
+        #else
+        let helperDirectory = "device-helper-x86_64"
+        #endif
+        guard let helper = Bundle.main.resourceURL?.appendingPathComponent("\(helperDirectory)/geospoof-helper"),
               FileManager.default.isExecutableFile(atPath: helper.path) else {
             throw DeviceError.message("The bundled device helper is missing. Reinstall GeoSpoof.")
         }

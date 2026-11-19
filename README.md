@@ -5,7 +5,7 @@ local Wi-Fi.
 
 ## Requirements
 
-- Apple silicon Mac running macOS 26 or later
+- Intel or Apple silicon Mac running macOS 26 or later (universal release)
 - Xcode, to build from source
 - A trusted iPhone with Developer Mode enabled
 - A USB connection, or the Mac and iPhone on the same Wi-Fi network
@@ -33,3 +33,20 @@ the project is moved, run `bash scripts/setup.sh` again.
 
 The first connection may require an internet connection so macOS can install
 Apple's developer support image on the iPhone.
+
+## Universal DMG release
+
+Run `bash scripts/release-universal.sh` to create
+`build/GeoSpoof-0.5.0-universal.dmg` and its SHA-256 checksum. This compiles
+the Swift app for arm64 and x86_64 and bundles separate, locked Python 3.13.16
+helpers selected by the running app architecture. Intel helpers can be
+smoke-tested under Rosetta on Apple silicon. The standard build script still
+builds an Apple silicon app.
+
+The locked Intel cryptography dependency requires compiling from source.
+Install a Rust toolchain with the `x86_64-apple-darwin` target and supply an
+Intel static OpenSSL build through `OPENSSL_DIR` and `OPENSSL_STATIC=1`.
+The release built here uses OpenSSL 3.5.9. Build tools are not required on
+recipients' Macs.
+
+The generated app is ad-hoc signed, not Developer ID signed or notarized.

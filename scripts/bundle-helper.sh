@@ -7,7 +7,7 @@ export PYINSTALLER_CONFIG_DIR="$PWD/build/pyinstaller-cache"
     --name geospoof-helper --distpath build/python-dist --workpath build/python-work \
     --specpath build --collect-data developer_disk_image \
     --recursive-copy-metadata pymobiledevice3 Sources/geospoof_helper.py
-target="build/GeoSpoof.app/Contents/Resources/device-helper"
+target="build/GeoSpoof.app/Contents/Resources/device-helper-arm64"
 if [ -d "$target" ]; then
     mv "$target" "build/previous-device-helper-$(date +%s)"
 fi
